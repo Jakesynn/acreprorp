@@ -21,78 +21,86 @@ active_orders = {}
 pending_reviews = {}
 
 
-# -----------------------------
-# REVIEW MODAL
-# -----------------------------
-class ReviewModal(Modal, title="Leave a Review"):
-    stars = TextInput(label="How many stars? (1-5)", required=True)
-    reason = TextInput(label="Why?", required=True, style=discord.TextStyle.paragraph)
+# =========================================================
+# REVIEW SYSTEM
+# =========================================================
+class ReviewModal(Modal, title="Customer Experience Review"):
+    stars = TextInput(
+        label="Overall Rating (1 - 5 Stars)",
+        placeholder="Enter a number from 1 to 5",
+        required=True
+    )
+
+    reason = TextInput(
+        label="Tell us about your experience",
+        style=discord.TextStyle.paragraph,
+        placeholder="What went well or what could be improved?",
+        required=True
+    )
 
     def __init__(self, user_id: int):
         super().__init__()
         self.user_id = user_id
 
     async def on_submit(self, interaction: discord.Interaction):
+
         try:
             stars = int(self.stars.value)
             if stars < 1 or stars > 5:
                 raise ValueError()
         except:
             return await interaction.response.send_message(
-                "❌ Stars must be 1–5.",
+                "❌ Please enter a valid rating between 1 and 5 stars.",
                 ephemeral=True
             )
 
-        review_channel = bot.get_channel(REVIEW_CHANNEL_ID) or await bot.fetch_channel(REVIEW_CHANNEL_ID)
+        channel = bot.get_channel(REVIEW_CHANNEL_ID) or await bot.fetch_channel(REVIEW_CHANNEL_ID)
 
         embed = discord.Embed(
-            title="⭐ New Review",
+            title="⭐ New Customer Review Received",
             color=discord.Color.gold()
         )
 
-        embed.add_field(name="User", value=interaction.user.mention, inline=False)
-        embed.add_field(name="Stars", value=f"{stars}/5", inline=True)
-        embed.add_field(name="Reason", value=self.reason.value, inline=False)
+        embed.add_field(name="Customer", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Rating", value=f"{stars}/5 Stars", inline=True)
+        embed.add_field(name="Feedback", value=self.reason.value, inline=False)
 
-        await review_channel.send(embed=embed)
+        embed.set_footer(text="Automated review system")
+
+        await channel.send(embed=embed)
 
         pending_reviews.pop(self.user_id, None)
 
         await interaction.response.send_message(
-            "✅ Thanks for your review!",
+            "✅ Thank you for taking the time to leave a review. We appreciate your feedback!",
             ephemeral=True
         )
 
 
-# -----------------------------
-# REVIEW BUTTON
-# -----------------------------
 class ReviewView(View):
     def __init__(self, user_id: int):
         super().__init__(timeout=300)
         self.user_id = user_id
 
     @discord.ui.button(
-        label="Make Review",
+        label="Write a Review",
         style=discord.ButtonStyle.primary,
         emoji="⭐"
     )
-    async def review(self, interaction: discord.Interaction, button: Button):
+    async def review_button(self, interaction: discord.Interaction, button: Button):
 
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message(
-                "This is not your review prompt.",
+                "❌ This review prompt is not linked to your account.",
                 ephemeral=True
             )
 
-        await interaction.response.send_modal(
-            ReviewModal(self.user_id)
-        )
+        await interaction.response.send_modal(ReviewModal(self.user_id))
 
 
-# -----------------------------
-# COLLECT BUTTON (DM)
-# -----------------------------
+# =========================================================
+# CUSTOMER COLLECTION SYSTEM
+# =========================================================
 class CollectView(View):
     def __init__(self, message_id: int, user_id: int):
         super().__init__(timeout=None)
@@ -100,7 +108,7 @@ class CollectView(View):
         self.user_id = user_id
 
     @discord.ui.button(
-        label="Collected",
+        label="Confirm Collection",
         style=discord.ButtonStyle.success,
         emoji="📦"
     )
@@ -108,98 +116,130 @@ class CollectView(View):
 
         order = active_orders.get(self.message_id)
         if not order:
-            return await interaction.response.send_message("Order not found.", ephemeral=True)
+            return await interaction.response.send_message(
+                "❌ This order could not be found or may have expired.",
+                ephemeral=True
+            )
 
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("Not your order.", ephemeral=True)
+            return await interaction.response.send_message(
+                "❌ This confirmation link does not belong to your account.",
+                ephemeral=True
+            )
 
         pending_reviews[self.user_id] = True
 
         await interaction.response.send_message(
-            "📩 Send a review?",
+            "📩 Thank you for confirming collection.\nWould you like to leave a review for your experience?",
             view=ReviewView(self.user_id),
             ephemeral=True
         )
 
 
-# -----------------------------
-# STAFF VIEW
-# -----------------------------
+# =========================================================
+# STAFF ORDER CONTROL PANEL
+# =========================================================
 class StaffView(View):
     def __init__(self, user_id: int, code: str):
         super().__init__(timeout=None)
         self.user_id = user_id
         self.code = code
 
-    # PAYMENT
-    @discord.ui.button(label="Needs Payment", style=discord.ButtonStyle.primary, emoji="💳")
+    # ---------------- PAYMENT ----------------
+    @discord.ui.button(
+        label="Mark as Payment Required",
+        style=discord.ButtonStyle.primary,
+        emoji="💳"
+    )
     async def payment(self, interaction: discord.Interaction, button: Button):
 
         channel = bot.get_channel(PAYMENT_CHANNEL_ID) or await bot.fetch_channel(PAYMENT_CHANNEL_ID)
         customer = await bot.fetch_user(self.user_id)
 
         thread = await channel.create_thread(
-            name=f"payment-{customer.name}",
+            name=f"Payment Discussion - {customer.name}",
             type=discord.ChannelType.private_thread
         )
 
         await thread.add_user(interaction.user)
+
         member = interaction.guild.get_member(self.user_id)
         if member:
             await thread.add_user(member)
 
         await thread.send(
-            f"💳 Payment required\n"
-            f"{customer.mention} | Staff: {interaction.user.mention}"
+            f"💳 **Payment Required**\n\n"
+            f"Customer: {customer.mention}\n"
+            f"Handled by: {interaction.user.mention}\n\n"
+            f"Please complete payment to proceed with the order."
         )
 
         await interaction.response.send_message(
-            f"Thread created: {thread.mention}",
+            f"✅ Payment thread successfully created: {thread.mention}",
             ephemeral=True
         )
 
-    # READY
-    @discord.ui.button(label="Ready To Collect", style=discord.ButtonStyle.green, emoji="📦")
+    # ---------------- READY ----------------
+    @discord.ui.button(
+        label="Mark as Ready for Collection",
+        style=discord.ButtonStyle.green,
+        emoji="📦"
+    )
     async def ready(self, interaction: discord.Interaction, button: Button):
 
         user = await bot.fetch_user(self.user_id)
 
         dm = await user.send(
-            f"🟢 Ready for collection\n\nCode: **{self.code}**"
+            "📦 **Your order is now ready for collection**\n\n"
+            f"🔑 Collection Code: **{self.code}**\n\n"
+            "Please confirm collection once you have received your order."
         )
 
         view = CollectView(dm.id, self.user_id)
         await dm.edit(view=view)
 
-        await interaction.response.send_message("DM sent.", ephemeral=True)
+        await interaction.response.send_message(
+            "✅ Customer has been notified and can now confirm collection.",
+            ephemeral=True
+        )
 
-    # COMPLETED (STAFF OVERRIDE)
-    @discord.ui.button(label="Completed", style=discord.ButtonStyle.secondary, emoji="✅")
+    # ---------------- COMPLETED ----------------
+    @discord.ui.button(
+        label="Mark as Completed",
+        style=discord.ButtonStyle.secondary,
+        emoji="✅"
+    )
     async def completed(self, interaction: discord.Interaction, button: Button):
 
         pending_reviews[self.user_id] = True
 
         await interaction.response.send_message(
-            "Marked complete. Review prompt sent.",
+            "✅ Order marked as completed. Sending review request to customer.",
             ephemeral=True
         )
 
-        user = await bot.fetch_user(self.user_id)
-
         try:
-            dm = await user.send("⭐ Send a review?")
+            user = await bot.fetch_user(self.user_id)
+
+            dm = await user.send(
+                "⭐ **We would love your feedback**\n\n"
+                "Your order has been completed.\n"
+                "Please leave a review about your experience."
+            )
+
             await dm.edit(view=ReviewView(self.user_id))
+
         except:
             pass
 
 
-# -----------------------------
-# ORDER MODAL
-# -----------------------------
-class OrderModal(Modal, title="Place an Order"):
-    item = TextInput(label="Item", required=True)
-    quantity = TextInput(label="Quantity (1-23)", required=True)
-    code = TextInput(label="Code", required=True)
+# =========================================================
+# ORDER CREATION SYSTEM
+# =========================================================
+class OrderModal(Modal, title="Place Your Order"):
+    item = TextInput(label="Item Name", required=True)
+    quantity = TextInput(label="Quantity (1 - 23)", required=True)
+    code = TextInput(label="Order / Access Code", required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
 
@@ -208,15 +248,25 @@ class OrderModal(Modal, title="Place an Order"):
             if qty < 1 or qty > 23:
                 raise ValueError()
         except:
-            return await interaction.response.send_message("❌ Invalid quantity", ephemeral=True)
+            return await interaction.response.send_message(
+                "❌ Please enter a valid quantity between 1 and 23.",
+                ephemeral=True
+            )
 
         channel = bot.get_channel(ORDER_CHANNEL_ID) or await bot.fetch_channel(ORDER_CHANNEL_ID)
 
-        embed = discord.Embed(title="📦 New Order", color=discord.Color.blue())
+        embed = discord.Embed(
+            title="📦 New Customer Order Received",
+            description="A new order has been placed and requires staff processing.",
+            color=discord.Color.blue()
+        )
+
         embed.add_field(name="Customer", value=interaction.user.mention, inline=False)
-        embed.add_field(name="Item", value=self.item.value, inline=True)
+        embed.add_field(name="Item Requested", value=self.item.value, inline=True)
         embed.add_field(name="Quantity", value=str(qty), inline=True)
-        embed.add_field(name="Code", value=self.code.value, inline=False)
+        embed.add_field(name="Order Code", value=self.code.value, inline=False)
+
+        embed.set_footer(text="Order Management System")
 
         view = StaffView(interaction.user.id, self.code.value)
 
@@ -227,24 +277,31 @@ class OrderModal(Modal, title="Place an Order"):
             "code": self.code.value
         }
 
-        await interaction.response.send_message("Order sent!", ephemeral=True)
+        await interaction.response.send_message(
+            "✅ Your order has been successfully submitted. Our team will process it shortly.",
+            ephemeral=True
+        )
 
 
-# -----------------------------
+# =========================================================
 # ORDER PANEL
-# -----------------------------
+# =========================================================
 class OrderPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Place Order", style=discord.ButtonStyle.green)
-    async def order(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(
+        label="Place a New Order",
+        style=discord.ButtonStyle.success,
+        emoji="🛒"
+    )
+    async def order_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(OrderModal())
 
 
-# -----------------------------
-# BOT READY
-# -----------------------------
+# =========================================================
+# BOT EVENTS
+# =========================================================
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
@@ -253,8 +310,10 @@ async def on_ready():
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def order(ctx):
+
     embed = discord.Embed(
-        title="Place an Order",
+        title="🛒 Order Portal",
+        description="Click the button below to begin placing your order.\nOur staff will process it as soon as possible.",
         color=discord.Color.red()
     )
 
