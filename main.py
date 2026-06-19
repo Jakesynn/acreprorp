@@ -1,3 +1,6 @@
+# main.py
+
+```python
 import os
 import discord
 from discord.ext import commands
@@ -8,9 +11,11 @@ load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
 ORDER_CHANNEL_ID = int(os.getenv("ORDER_CHANNEL_ID"))
+PAYMENT_CHANNEL_ID = int(os.getenv("PAYMENT_CHANNEL_ID"))
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -18,19 +23,16 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 class OrderModal(Modal, title="Place an Order"):
     item = TextInput(
         label="What item would you like?",
-        placeholder="Example Item",
         required=True
     )
 
     quantity = TextInput(
         label="Quantity (1-23)",
-        placeholder="1-23",
         required=True
     )
 
     code = TextInput(
         label="What code?",
-        placeholder="ABC123",
         required=True
     )
 
@@ -63,16 +65,19 @@ class OrderModal(Modal, title="Place an Order"):
             value=interaction.user.mention,
             inline=False
         )
+
         embed.add_field(
             name="Item",
             value=self.item.value,
             inline=True
         )
+
         embed.add_field(
             name="Quantity",
             value=str(qty),
             inline=True
         )
+
         embed.add_field(
             name="Code",
             value=self.code.value,
@@ -84,7 +89,10 @@ class OrderModal(Modal, title="Place an Order"):
             code=self.code.value
         )
 
-        await channel.send(embed=embed, view=view)
+        await channel.send(
+            embed=embed,
+            view=view
+        )
 
         await interaction.response.send_message(
             "✅ Your order has been submitted!",
@@ -118,8 +126,62 @@ class StaffView(View):
         self.code = code
 
     @discord.ui.button(
+        label="Needs Payment",
+        style=discord.ButtonStyle.primary,
+        emoji="💳"
+    )
+    async def payment(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        payment_channel = bot.get_channel(
+            PAYMENT_CHANNEL_ID
+        )
+
+        if payment_channel is None:
+            payment_channel = await bot.fetch_channel(
+                PAYMENT_CHANNEL_ID
+            )
+
+        customer = await bot.fetch_user(
+            self.user_id
+        )
+
+        thread = await payment_channel.create_thread(
+            name=f"Payment - {customer.name}",
+            type=discord.ChannelType.private_thread
+        )
+
+        try:
+            customer_member = interaction.guild.get_member(
+                self.user_id
+            )
+
+            if customer_member:
+                await thread.add_user(customer_member)
+        except:
+            pass
+
+        try:
+            await thread.add_user(interaction.user)
+        except:
+            pass
+
+        await thread.send(
+            f"{customer.mention} {interaction.user.mention}\n"
+            f"💳 Payment is required for this order."
+        )
+
+        await interaction.response.send_message(
+            f"✅ Payment thread created: {thread.mention}",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
         label="Ready To Collect",
-        style=discord.ButtonStyle.green
+        style=discord.ButtonStyle.green,
+        emoji="📦"
     )
     async def ready(
         self,
@@ -127,7 +189,9 @@ class StaffView(View):
         button: discord.ui.Button
     ):
         try:
-            user = await bot.fetch_user(self.user_id)
+            user = await bot.fetch_user(
+                self.user_id
+            )
 
             await user.send(
                 f"🟢 Your order is ready to collect!\n\n"
@@ -148,7 +212,8 @@ class StaffView(View):
 
     @discord.ui.button(
         label="Completed",
-        style=discord.ButtonStyle.secondary
+        style=discord.ButtonStyle.secondary,
+        emoji="✅"
     )
     async def completed(
         self,
@@ -192,3 +257,4 @@ async def order(ctx):
 
 
 bot.run(TOKEN)
+```
